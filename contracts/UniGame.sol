@@ -1,11 +1,11 @@
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "@chainlink/contracts/src/v0.8/vrf/interfaces/AggregatorV3Interface.sol"; // For oracle data (bets)
-import "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2.sol"; // For VRF (raffles)
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol"; // Prevent reentrancy
-import "@openzeppelin/contracts/access/Ownable.sol"; // For admin controls
+import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol"; // Fixed earlier
+import "@chainlink/contracts/src/v0.8/vrf/VRFConsumerBaseV2.sol";
+import "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol"; // Added
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol"; //
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     // --------------------------------------
@@ -24,7 +24,7 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
         address _vrfCoordinator,
         bytes32 _keyHash,
         uint64 _subscriptionId
-    ) VRFConsumerBaseV2(_vrfCoordinator) Ownable(msg.sender) {
+    ) VRFConsumerBaseV2(_vrfCoordinator) Ownable() {
         oracle = _oracle;
         COORDINATOR = VRFCoordinatorV2Interface(_vrfCoordinator);
         keyHash = _keyHash;
@@ -34,7 +34,12 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     // --------------------------------------
     // Bet Struct & Logic
     // --------------------------------------
-    enum BetState { Pending, Accepted, Resolved, Cancelled }
+    enum BetState {
+        Pending,
+        Accepted,
+        Resolved,
+        Cancelled
+    }
 
     struct Bet {
         address creator;
@@ -52,21 +57,62 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     uint256 public betCounter;
     mapping(bytes32 => bool) public usedEventIds;
 
-    event BetCreated(uint256 indexed betId, address creator, string description, bytes32 eventId, uint256 amount, uint256 deadline);
-    event BetAccepted(uint256 indexed betId, address challenger, uint256 amount);
+    event BetCreated(
+        uint256 indexed betId,
+        address creator,
+        string description,
+        bytes32 eventId,
+        uint256 amount,
+        uint256 deadline
+    );
+    event BetAccepted(
+        uint256 indexed betId,
+        address challenger,
+        uint256 amount
+    );
     event BetResolved(uint256 indexed betId, address winner, uint256 payout);
     event BetCancelled(uint256 indexed betId, address creator);
+    event Debug(string message, uint256 value);
+    event DebugAddress(string message, address value);
+    event DebugBytes32(string message, bytes32 value);
 
-    function createBet(string memory _description, bytes32 _eventId, uint256 _deadline) external payable nonReentrant {
+    function createBet(
+        string memory _description,
+        bytes32 _eventId,
+        uint256 _deadline
+    ) external payable nonReentrant {
+        emit Debug("Received value", msg.value);
+        emit Debug("Deadline", _deadline);
+        emit Debug("Current timestamp", block.timestamp);
+        emit DebugBytes32("Event ID", _eventId);
+        emit DebugAddress("Sender", msg.sender);
+
         require(msg.value > 0, "Must bet a positive amount");
         require(_deadline > block.timestamp, "Deadline must be in the future");
         require(!usedEventIds[_eventId], "Event ID already used");
 
         betCounter++;
-        bets[betCounter] = Bet(msg.sender, _description, _eventId, msg.value, address(0), 0, BetState.Pending, address(0), _deadline);
+        bets[betCounter] = Bet(
+            msg.sender,
+            _description,
+            _eventId,
+            msg.value,
+            address(0),
+            0,
+            BetState.Pending,
+            address(0),
+            _deadline
+        );
         usedEventIds[_eventId] = true;
 
-        emit BetCreated(betCounter, msg.sender, _description, _eventId, msg.value, _deadline);
+        emit BetCreated(
+            betCounter,
+            msg.sender,
+            _description,
+            _eventId,
+            msg.value,
+            _deadline
+        );
     }
 
     function acceptBet(uint256 _betId) external payable nonReentrant {
@@ -86,7 +132,10 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     function cancelBet(uint256 _betId) external nonReentrant {
         Bet storage bet = bets[_betId];
         require(msg.sender == bet.creator, "Only creator can cancel");
-        require(bet.state == BetState.Pending, "Bet already accepted or resolved");
+        require(
+            bet.state == BetState.Pending,
+            "Bet already accepted or resolved"
+        );
         require(block.timestamp >= bet.deadline, "Deadline not reached");
 
         bet.state = BetState.Cancelled;
@@ -102,7 +151,10 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
         Bet storage bet = bets[_betId];
         require(bet.state == BetState.Accepted, "Bet not accepted yet");
         require(bet.state != BetState.Resolved, "Bet already resolved");
-        require(_winner == bet.creator || _winner == bet.challenger, "Invalid winner");
+        require(
+            _winner == bet.creator || _winner == bet.challenger,
+            "Invalid winner"
+        );
 
         bet.state = BetState.Resolved;
         bet.winner = _winner;
@@ -120,7 +172,8 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     // --------------------------------------
     struct Poll {
         string question;
-        uint256[] votes; // Fixed-size array for gas efficiency
+        string[] options;
+        uint256[] votes;
         uint256 endTime;
         address creator;
         bool active;
@@ -133,13 +186,56 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     event Voted(uint256 indexed pollId, address voter, uint256 optionIndex);
     event PollClosed(uint256 indexed pollId);
 
-    function createPoll(string memory _question, uint256 _duration, uint256 _optionCount) external {
-        require(_optionCount >= 2 && _optionCount <= 10, "Options must be between 2 and 10");
+    function getPollsLength() external view returns (uint256) {
+        return polls.length;
+    }
+
+    function getPollVotes(uint256 _pollId) external view returns (uint256[] memory) {
+        return polls[_pollId].votes;
+    }
+
+    function getPollOptions(uint256 _pollId) external view returns (string[] memory) {
+        return polls[_pollId].options;
+    }
+
+    function getPollDetails(uint256 _pollId) external view returns (
+        string memory question,
+        string[] memory options,
+        uint256[] memory votes,
+        uint256 endTime,
+        address creator,
+        bool active
+    ) {
+        Poll storage poll = polls[_pollId];
+        return (
+            poll.question,
+            poll.options,
+            poll.votes,
+            poll.endTime,
+            poll.creator,
+            poll.active
+        );
+    }
+
+    function hasVoted(uint256 _pollId, address _voter) external view returns (bool) {
+        return polls[_pollId].hasVoted[_voter];
+    }
+
+    function createPoll(
+        string memory _question,
+        string[] memory _options,
+        uint256 _duration
+    ) external {
+        require(
+            _options.length >= 2 && _options.length <= 10,
+            "Options must be between 2 and 10"
+        );
         require(_duration > 0, "Duration must be positive");
 
         Poll storage newPoll = polls.push();
         newPoll.question = _question;
-        newPoll.votes = new uint256[](_optionCount);
+        newPoll.options = _options;
+        newPoll.votes = new uint256[](_options.length);
         newPoll.endTime = block.timestamp + _duration;
         newPoll.creator = msg.sender;
         newPoll.active = true;
@@ -164,7 +260,10 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
         Poll storage poll = polls[_pollId];
         require(poll.active, "Poll already closed");
         if (msg.sender != poll.creator) {
-            require(block.timestamp >= poll.endTime, "Poll still active and not creator");
+            require(
+                block.timestamp >= poll.endTime,
+                "Poll still active and not creator"
+            );
         }
 
         poll.active = false;
@@ -189,8 +288,16 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     uint256 public raffleCount;
     mapping(uint256 => uint256) public requestIdToRaffle;
 
-    event RaffleCreated(uint256 indexed raffleId, uint256 ticketPrice, uint256 endTime);
-    event TicketBought(uint256 indexed raffleId, address buyer, uint256 ticketCount);
+    event RaffleCreated(
+        uint256 indexed raffleId,
+        uint256 ticketPrice,
+        uint256 endTime
+    );
+    event TicketBought(
+        uint256 indexed raffleId,
+        address buyer,
+        uint256 ticketCount
+    );
     event WinnerPicked(uint256 indexed raffleId, address winner);
 
     function createRaffle(uint256 _ticketPrice, uint256 _duration) external {
@@ -207,10 +314,16 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
         raffleCount++;
     }
 
-    function buyTicket(uint256 _raffleId, uint256 _ticketCount) external payable nonReentrant {
+    function buyTicket(
+        uint256 _raffleId,
+        uint256 _ticketCount
+    ) external payable nonReentrant {
         Raffle storage raffle = raffles[_raffleId];
         require(raffle.active, "Raffle is not active");
-        require(msg.value == raffle.ticketPrice * _ticketCount, "Incorrect payment");
+        require(
+            msg.value == raffle.ticketPrice * _ticketCount,
+            "Incorrect payment"
+        );
         require(block.timestamp < raffle.endTime, "Raffle has ended");
         require(_ticketCount > 0, "Must buy at least one ticket");
 
@@ -240,7 +353,10 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
         requestIdToRaffle[requestId] = _raffleId;
     }
 
-    function fulfillRandomWords(uint256 _requestId, uint256[] memory _randomWords) internal override nonReentrant {
+    function fulfillRandomWords(
+        uint256 _requestId,
+        uint256[] memory _randomWords
+    ) internal override nonReentrant {
         uint256 raffleId = requestIdToRaffle[_requestId];
         Raffle storage raffle = raffles[raffleId];
         require(raffle.active, "Raffle already resolved");
@@ -263,57 +379,167 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
         raffle.active = false;
         uint256 fee = (raffle.totalPool * platformFeePercent) / 100;
         uint256 payout = raffle.totalPool - fee;
-        payable(raffle.winner).transfer(payout);
 
+        payable(raffle.winner).transfer(payout);
         emit WinnerPicked(raffleId, raffle.winner);
     }
 
     // --------------------------------------
     // Staking Struct & Logic
     // --------------------------------------
-    struct Stake {
-        uint256 amount;
+    struct StakePool {
+        string name;
+        address creator;
+        uint256 maxStake;
+        uint256 totalStaked;
+        uint256 apy;
+        uint256 duration;
         uint256 startTime;
-        uint256 duration; // In seconds
         bool active;
     }
 
-    mapping(address => Stake) public stakes;
-    uint256 public rewardRate = 5; // 5% annualized reward (simplified)
-
-    event Staked(address indexed user, uint256 amount, uint256 duration);
-    event Unstaked(address indexed user, uint256 amount, uint256 reward);
-
-    function stake(uint256 _duration) external payable nonReentrant {
-        require(msg.value > 0, "Must stake a positive amount");
-        require(_duration >= 1 days, "Minimum stake duration is 1 day");
-        require(!stakes[msg.sender].active, "Already staking");
-
-        stakes[msg.sender] = Stake({
-            amount: msg.value,
-            startTime: block.timestamp,
-            duration: _duration,
-            active: true
-        });
-
-        emit Staked(msg.sender, msg.value, _duration);
+    struct UserStake {
+        uint256 amount;
+        uint256 startTime;
+        bool active;
     }
 
-    function unstake() external nonReentrant {
-        Stake storage userStake = stakes[msg.sender];
+    mapping(uint256 => StakePool) public stakePools;
+    mapping(uint256 => mapping(address => UserStake)) public userStakes;
+    uint256 public stakePoolCounter;
+
+    event StakePoolCreated(
+        uint256 indexed poolId,
+        string name,
+        address creator,
+        uint256 maxStake,
+        uint256 apy,
+        uint256 duration
+    );
+    event Staked(
+        uint256 indexed poolId,
+        address indexed user,
+        uint256 amount,
+        uint256 startTime
+    );
+    event Unstaked(
+        uint256 indexed poolId,
+        address indexed user,
+        uint256 amount,
+        uint256 reward
+    );
+
+    function createStakePool(
+        string memory _name,
+        uint256 _maxStake,
+        uint256 _apy,
+        uint256 _duration
+    ) external nonReentrant {
+        require(_maxStake > 0, "Max stake must be positive");
+        require(_apy > 0 && _apy <= 10000, "APY must be between 0 and 10000");
+        require(_duration > 0, "Duration must be positive");
+
+        stakePoolCounter++;
+        stakePools[stakePoolCounter] = StakePool(
+            _name,
+            msg.sender,
+            _maxStake,
+            0,
+            _apy,
+            _duration,
+            block.timestamp,
+            true
+        );
+
+        emit StakePoolCreated(
+            stakePoolCounter,
+            _name,
+            msg.sender,
+            _maxStake,
+            _apy,
+            _duration
+        );
+    }
+
+    function stake(uint256 _poolId) external payable nonReentrant {
+        StakePool storage pool = stakePools[_poolId];
+        require(pool.active, "Pool is not active");
+        require(msg.value > 0, "Must stake positive amount");
+        require(
+            pool.totalStaked + msg.value <= pool.maxStake,
+            "Exceeds pool capacity"
+        );
+
+        UserStake storage userStake = userStakes[_poolId][msg.sender];
+        require(!userStake.active, "Already staking in this pool");
+
+        pool.totalStaked += msg.value;
+        userStakes[_poolId][msg.sender] = UserStake(
+            msg.value,
+            block.timestamp,
+            true
+        );
+
+        emit Staked(_poolId, msg.sender, msg.value, block.timestamp);
+    }
+
+    function unstake(uint256 _poolId) external nonReentrant {
+        StakePool storage pool = stakePools[_poolId];
+        UserStake storage userStake = userStakes[_poolId][msg.sender];
+        
         require(userStake.active, "No active stake");
-        require(block.timestamp >= userStake.startTime + userStake.duration, "Stake still locked");
+        require(
+            block.timestamp >= userStake.startTime + pool.duration,
+            "Staking period not over"
+        );
 
-        uint256 amount = userStake.amount;
-        uint256 timeStaked = block.timestamp - userStake.startTime;
-        uint256 reward = (amount * rewardRate * timeStaked) / (365 days * 100); // Simplified reward calculation
-        uint256 totalPayout = amount + reward;
+        uint256 stakedAmount = userStake.amount;
+        uint256 stakingDuration = block.timestamp - userStake.startTime;
+        uint256 reward = (stakedAmount * pool.apy * stakingDuration) / (365 days * 10000);
 
+        pool.totalStaked -= stakedAmount;
         userStake.active = false;
-        userStake.amount = 0; // Prevent reentrancy
-        payable(msg.sender).transfer(totalPayout);
 
-        emit Unstaked(msg.sender, amount, reward);
+        (bool success, ) = msg.sender.call{value: stakedAmount + reward}("");
+        require(success, "Transfer failed");
+
+        emit Unstaked(_poolId, msg.sender, stakedAmount, reward);
+    }
+
+    function getStakePool(uint256 _poolId)
+        external
+        view
+        returns (
+            string memory name,
+            address creator,
+            uint256 maxStake,
+            uint256 totalStaked,
+            uint256 apy,
+            uint256 duration,
+            uint256 startTime,
+            bool active
+        )
+    {
+        StakePool memory pool = stakePools[_poolId];
+        return (
+            pool.name,
+            pool.creator,
+            pool.maxStake,
+            pool.totalStaked,
+            pool.apy,
+            pool.duration,
+            pool.startTime,
+            pool.active
+        );
+    }
+
+    function getUserStake(uint256 _poolId, address _user)
+        external
+        view
+        returns (uint256 amount, uint256 startTime, bool active)
+    {
+        UserStake memory userStake = userStakes[_poolId][_user];
+        return (userStake.amount, userStake.startTime, userStake.active);
     }
 
     // --------------------------------------
@@ -326,11 +552,6 @@ contract UniGame is VRFConsumerBaseV2, ReentrancyGuard, Ownable {
     function setPlatformFee(uint256 _feePercent) external onlyOwner {
         require(_feePercent <= 10, "Fee too high");
         platformFeePercent = _feePercent;
-    }
-
-    function setRewardRate(uint256 _rate) external onlyOwner {
-        require(_rate <= 20, "Reward rate too high"); // Cap at 20%
-        rewardRate = _rate;
     }
 
     function withdrawFees() external onlyOwner nonReentrant {

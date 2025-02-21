@@ -1,26 +1,83 @@
 const hre = require("hardhat");
 
 async function main() {
-  // Contract configuration
-  const vrfCoordinator = "0x50d47e4142598E3411aA864e08a44284e471AC6f"; // Arbitrum Sepolia VRF Coordinator
-  const keyHash = "0x8212157d7335e4ce0c3ebc56d40c4d3d3d36cf6c0a6d147c5b4b3f8580d5d248"; // Arbitrum Sepolia keyHash
-  const subscriptionId = 1; // Replace with your actual Chainlink VRF subscription ID
+  const [deployer] = await hre.ethers.getSigners();
+  console.log("Deploying contracts with the account:", deployer.address);
 
-  // Deploy UniGame
+  // For local testing, we'll use the deployer as both oracle and VRF coordinator
+  const config = {
+    oracle: deployer.address,
+    vrfCoordinator: deployer.address,
+    keyHash: "0x474e34a077df58807dbe9c96d3c009b23b3c6d0cce433e59bbf5b34f823bc56c", // Arbitrum Sepolia VRF keyHash
+    subscriptionId: 1
+  };
+
+  console.log("Deploying UniGame with config:", config);
   const UniGame = await hre.ethers.getContractFactory("UniGame");
-  const uniGame = await UniGame.deploy(vrfCoordinator, keyHash, subscriptionId);
+  const uniGame = await UniGame.deploy(
+    config.oracle,
+    config.vrfCoordinator,
+    config.keyHash,
+    config.subscriptionId
+  );
 
   await uniGame.waitForDeployment();
-  console.log("UniGame deployed to:", await uniGame.getAddress());
+  const contractAddress = await uniGame.getAddress();
+  console.log("UniGame deployed to:", contractAddress);
 
-  // Verify contract on Arbiscan
-  if (process.env.ARBISCAN_API_KEY) {
+  // Initialize some test data
+  console.log("Creating initial test data...");
+  
+  try {
+    // Create a test bet
+    const betTx = await uniGame.createBet(
+      "Test Bet",
+      "0x1234567890123456789012345678901234567890123456789012345678901234",
+      Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days from now
+      { value: hre.ethers.parseEther("0.1") }
+    );
+    await betTx.wait();
+    console.log("Created test bet");
+
+    // Create a test poll
+    const pollTx = await uniGame.createPoll(
+      "Test Poll",
+      ["Option 1", "Option 2"],
+      7 * 24 * 60 * 60 // 7 days duration
+    );
+    await pollTx.wait();
+    console.log("Created test poll");
+
+    // Create a test raffle
+    const raffleTx = await uniGame.createRaffle(
+      hre.ethers.parseEther("0.01"), // 0.01 ETH ticket price
+      7 * 24 * 60 * 60 // 7 days duration
+    );
+    await raffleTx.wait();
+    console.log("Created test raffle");
+
+    // Create a test stake pool
+    const stakeTx = await uniGame.createStakePool(
+      "Test Stake Pool",
+      hre.ethers.parseEther("1"), // 1 ETH max stake
+      1000, // 10% APY
+      30 * 24 * 60 * 60 // 30 days duration
+    );
+    await stakeTx.wait();
+    console.log("Created test stake pool");
+
+  } catch (error) {
+    console.error("Error creating test data:", error);
+  }
+
+  // Verify contract on Arbiscan (skip for localhost)
+  if (process.env.ARBISCAN_API_KEY && hre.network.name !== "localhost" && hre.network.name !== "hardhat") {
     console.log("Waiting for 6 block confirmations...");
     await uniGame.deploymentTransaction().wait(6);
     
     await hre.run("verify:verify", {
-      address: await uniGame.getAddress(),
-      constructorArguments: [vrfCoordinator, keyHash, subscriptionId],
+      address: contractAddress,
+      constructorArguments: [config.oracle, config.vrfCoordinator, config.keyHash, config.subscriptionId],
     });
     console.log("Contract verified on Arbiscan");
   }
