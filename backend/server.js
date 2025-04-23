@@ -6,14 +6,28 @@ const authRoutes = require('./routes/auth');
 
 const app = express();
 
+// CORS configuration
+const corsOptions = {
+  origin: ['https://schoolfi.vercel.app', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
+
+// Root route
+app.get('/', (req, res) => {
+  res.json({ message: 'Welcome to ScholFi API' });
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
