@@ -2,7 +2,7 @@
 
 ![Solidity](https://img.shields.io/badge/Solidity-e6e6e6?style=for-the-badge&logo=solidity&logoColor=black)
 ![Chainlink](https://img.shields.io/badge/Chainlink-375BD2?style=for-the-badge&logo=chainlink&logoColor=white)
-![AWS](https://img.shields.io/badge/AWS-Cloud_Infrastructure-232F3E?style=for-the-badge&logo=amazon-aws)
+
 
 ## Abstract
 The UniGame Protocol is a multi-primitive decentralized application (dApp) built on the Ethereum Virtual Machine (EVM). It explores secure state execution across four distinct Web3 mechanisms: Peer-to-Peer Wagering, Provably Fair Raffles, Decentralized Polling, and Yield-Bearing Staking Pools.
